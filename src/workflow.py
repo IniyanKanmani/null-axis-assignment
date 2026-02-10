@@ -1,18 +1,36 @@
-from langchain_core.messages import BaseMessage
+import traceback
+
+from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
+from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
-from typing_extensions import AsyncIterator, Literal, Optional
+from langgraph.prebuilt import ToolNode
+from langgraph.types import Command
+from typing_extensions import AsyncIterator, Literal, cast
 
+from src.models import GuardrailStructuredOutputModel
 from src.settings import Settings
-from src.state import WorkflowState
+from src.states import WorkflowState
+from src.system_prompts import SystemPrompts
 
 
 class Workflow:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
+        self.system_prompts = SystemPrompts()
+
+        self.tools = [
+            StructuredTool(
+                name="query_runner",
+                coroutine=self.query_runner_node,
+            )
+        ]
+
+        self.setup_models()
+
     def setup_models(self) -> None:
-        self.guardrail_model = ChatOpenAI(
+        base_guardrail_model = ChatOpenAI(
             base_url=self.settings.openrouter_base_url,
             api_key=self.settings.openrouter_api_key,
             model=self.settings.openrouter_model_1,
@@ -30,13 +48,19 @@ class Workflow:
             },
         )
 
-        self.query_writer_model = ChatOpenAI(
+        self.guardrail_model = base_guardrail_model.with_structured_output(
+            schema=GuardrailStructuredOutputModel,
+            method="json_schema",
+            strict=True,
+        )
+
+        base_query_writer_model = ChatOpenAI(
             base_url=self.settings.openrouter_base_url,
             api_key=self.settings.openrouter_api_key,
             model=self.settings.openrouter_model_2,
             disable_streaming=True,
             streaming=False,
-            temperature=0.25,
+            temperature=0,
             extra_body={
                 "provider": {
                     "allow_fallbacks": True,
@@ -48,7 +72,12 @@ class Workflow:
             },
         )
 
-        self.answer_model = ChatOpenAI(
+        self.query_writer_model = base_query_writer_model.bind_tools(
+            tools=self.tools,
+            strict=True,
+        )
+
+        self.responder_model = ChatOpenAI(
             base_url=self.settings.openrouter_base_url,
             api_key=self.settings.openrouter_api_key,
             model=self.settings.openrouter_model_3,
@@ -66,40 +95,95 @@ class Workflow:
             },
         )
 
-    async def guardrail_node(self, state: WorkflowState) -> Optional[WorkflowState]:
-        pass
+    async def guardrail_node(
+        self, state: WorkflowState
+    ) -> Command[Literal[END, "query_writer"]]:
+        try:
+            guardrail_system_prompt = SystemMessage(
+                content=self.system_prompts.guardrail_prompt,
+            )
 
-    def router(self, state: WorkflowState) -> Literal["query_writer", "end"]:
-        # Temp
-        if True:
-            return "query_writer"
-        else:
-            return "end"
+            response = await self.guardrail_model.ainvoke(
+                [guardrail_system_prompt] + state["messages"]
+            )
 
-    async def query_writer_node(self, state: WorkflowState) -> Optional[WorkflowState]:
-        pass
+            is_irrelevant_prompt = response.get("is_irrelevant_prompt")
+            is_mallicious_prompt = response.get("is_mallicious_prompt")
+            reason = response.get("reason")
 
-    async def answer_node(self, state: WorkflowState) -> Optional[WorkflowState]:
-        pass
+            if (is_irrelevant_prompt or is_mallicious_prompt) and reason:
+                return Command(
+                    update={"messages": [AIMessage(content=reason)]},
+                    goto=END,
+                )
+            else:
+                return Command(goto="query_writer")
+
+        except Exception as e:
+            print(e)
+            traceback.print_exc()
+
+            return Command(goto=END)
+
+    async def query_writer_node(self, state: WorkflowState) -> WorkflowState:
+        try:
+            query_writer_system_prompt = SystemMessage(
+                content=self.system_prompts.query_writer_prompt,
+            )
+
+            response = await self.query_writer_model.ainvoke(
+                [query_writer_system_prompt] + state["messages"]
+            )
+
+            return cast(WorkflowState, {"messages": [response]})
+
+        except Exception as e:
+            print(e)
+            traceback.print_exc()
+
+            return cast(WorkflowState, {})
+
+    async def query_runner_node(self, query: str) -> list[dict]:
+        return []
+
+    async def responder_node(self, state: WorkflowState) -> WorkflowState:
+        try:
+            responder_system_prompt = SystemMessage(
+                content=self.system_prompts.responder_prompt,
+            )
+
+            response = await self.responder_model.ainvoke(
+                [responder_system_prompt] + state["messages"]
+            )
+
+            return cast(WorkflowState, {"messages": [response]})
+
+        except Exception as e:
+            print(e)
+            traceback.print_exc()
+
+            return cast(WorkflowState, {})
 
     def build_graph(self) -> None:
         graph_builder = StateGraph(WorkflowState)
 
-        graph_builder.add_node("guardrail", self.guardrail_node)
+        tool_node = ToolNode(tools=self.tools)
+
+        graph_builder.add_node(
+            "guardrail",
+            self.guardrail_node,
+            destinations=(END, "query_writer"),
+        )
         graph_builder.add_node("query_writer", self.query_writer_node)
-        graph_builder.add_node("answer", self.answer_node)
+        graph_builder.add_node("tools", tool_node)
+        graph_builder.add_node("responder", self.responder_node)
 
         graph_builder.add_edge(START, "guardrail")
-        graph_builder.add_conditional_edges(
-            "router",
-            self.router,
-            {
-                "query_writer": "query_writer",
-                "end": END,
-            },
-        )
-        graph_builder.add_edge("query_writer", "answer")
-        graph_builder.add_edge("answer", END)
+        # graph_builder.add_edge("guardrail", END) # Handled by Command
+        # graph_builder.add_edge("guardrail", "query_writer") # Handled by Command
+        graph_builder.add_edge("query_writer", "tools")
+        graph_builder.add_edge("tools", "responder")
+        graph_builder.add_edge("responder", END)
 
         self.graph_builder = graph_builder
 
