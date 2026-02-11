@@ -1,8 +1,12 @@
 from pydantic import SecretStr
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+    )
+
     debug: bool
 
     openrouter_base_url: str
@@ -11,3 +15,9 @@ class Settings(BaseSettings):
     openrouter_model_1: str
     openrouter_model_2: str
     openrouter_model_3: str
+
+    database_host: str
+    database_port: int
+    database_name: str
+    database_user: str
+    database_password: SecretStr

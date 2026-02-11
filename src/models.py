@@ -13,3 +13,9 @@ class GuardrailStructuredOutputModel(BaseModel):
     reason: str = Field(
         description="Explanation for blocking the message, empty if allowed."
     )
+
+
+class QueryRunnerInputModel(BaseModel):
+    """Input schema for the query_runner tool."""
+
+    query: str = Field(description="The PostgreSQL SELECT query to execute")

@@ -1,5 +1,7 @@
 import traceback
 
+import asyncpg
+import sqlglot as sg
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
@@ -8,21 +10,22 @@ from langgraph.prebuilt import ToolNode
 from langgraph.types import Command
 from typing_extensions import AsyncIterator, Literal, cast
 
-from src.models import GuardrailStructuredOutputModel
+from src.models import GuardrailStructuredOutputModel, QueryRunnerInputModel
 from src.settings import Settings
 from src.states import WorkflowState
 from src.system_prompts import SystemPrompts
 
 
 class Workflow:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, db_pool: asyncpg.Pool) -> None:
         self.settings = settings
+        self.db_pool = db_pool
 
         self.system_prompts = SystemPrompts()
-
         self.tools = [
             StructuredTool(
                 name="query_runner",
+                args_schema=QueryRunnerInputModel,
                 coroutine=self.query_runner_node,
             )
         ]
@@ -37,13 +40,17 @@ class Workflow:
             disable_streaming=True,
             streaming=False,
             temperature=0.25,
+            # reasoning={
+            #     "effort": "medium",
+            #     "summary": None,
+            # },
             extra_body={
                 "provider": {
                     "allow_fallbacks": True,
                     "require_parameters": True,
                     "data_collection": "deny",
                     "zdr": True,
-                    "sort": "latency",
+                    "sort": "price",
                 },
             },
         )
@@ -61,13 +68,17 @@ class Workflow:
             disable_streaming=True,
             streaming=False,
             temperature=0,
+            # reasoning={
+            #     "effort": "medium",
+            #     "summary": None,
+            # },
             extra_body={
                 "provider": {
                     "allow_fallbacks": True,
                     "require_parameters": True,
                     "data_collection": "deny",
                     "zdr": True,
-                    "sort": "latency",
+                    "sort": "price",
                 },
             },
         )
@@ -84,13 +95,17 @@ class Workflow:
             disable_streaming=False,
             streaming=True,
             temperature=0.75,
+            # reasoning={
+            #     "effort": "medium",
+            #     "summary": None,
+            # },
             extra_body={
                 "provider": {
                     "allow_fallbacks": True,
                     "require_parameters": True,
                     "data_collection": "deny",
                     "zdr": True,
-                    "sort": "latency",
+                    "sort": "price",
                 },
             },
         )
@@ -99,6 +114,9 @@ class Workflow:
         self, state: WorkflowState
     ) -> Command[Literal[END, "query_writer"]]:
         try:
+            if self.settings.debug:
+                print("---GuardRailNode---")
+
             guardrail_system_prompt = SystemMessage(
                 content=self.system_prompts.guardrail_prompt,
             )
@@ -107,9 +125,9 @@ class Workflow:
                 [guardrail_system_prompt] + state["messages"]
             )
 
-            is_irrelevant_prompt = response.get("is_irrelevant_prompt")
-            is_mallicious_prompt = response.get("is_mallicious_prompt")
-            reason = response.get("reason")
+            is_irrelevant_prompt = response.is_irrelevant_prompt
+            is_mallicious_prompt = response.is_mallicious_prompt
+            reason = response.reason
 
             if (is_irrelevant_prompt or is_mallicious_prompt) and reason:
                 return Command(
@@ -127,6 +145,9 @@ class Workflow:
 
     async def query_writer_node(self, state: WorkflowState) -> WorkflowState:
         try:
+            if self.settings.debug:
+                print("---QueryWriterNode---")
+
             query_writer_system_prompt = SystemMessage(
                 content=self.system_prompts.query_writer_prompt,
             )
@@ -144,10 +165,36 @@ class Workflow:
             return cast(WorkflowState, {})
 
     async def query_runner_node(self, query: str) -> list[dict]:
-        return []
+        """Execute a PostgreSQL SELECT query.
+
+        Args:
+            query (str): The SELECT query string
+
+        Returns:
+            list[dict]: DB records
+        """
+        try:
+            if self.settings.debug:
+                print("---QueryRunnerNode---")
+
+            sg.parse_one(sql=query, read="postgres")
+
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch(query)
+
+                return [dict(row) for row in rows]
+
+        except Exception as e:
+            print(e)
+            traceback.print_exc()
+
+            return []
 
     async def responder_node(self, state: WorkflowState) -> WorkflowState:
         try:
+            if self.settings.debug:
+                print("---ResponderNode---")
+
             responder_system_prompt = SystemMessage(
                 content=self.system_prompts.responder_prompt,
             )
