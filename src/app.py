@@ -68,11 +68,12 @@ def main():
                 st.error(f"Failed to initialize: {e}")
                 st.stop()
 
-    st.title("🏙️ NYC 311 Analytics Bot")
+    if not st.session_state.messages:
+        st.title("🏙️ NYC 311 Analytics Bot")
 
-    st.markdown(
-        "Ask questions about NYC 311 service request data from 2020 to present."
-    )
+        st.markdown(
+            "Ask questions about NYC 311 service request data from 2020 to present."
+        )
 
     with st.sidebar:
         st.header("ℹ️ About")

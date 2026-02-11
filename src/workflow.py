@@ -10,17 +10,19 @@ from langgraph.prebuilt import ToolNode
 from langgraph.types import Command
 from typing_extensions import AsyncIterator, Literal, cast
 
-from models import GuardrailStructuredOutputModel, QueryRunnerInputModel
+from models import (
+    GuardrailStructuredOutputModel,
+    QueryRunnerInputModel,
+    SystemPromptsModel,
+)
 from settings import Settings
 from states import WorkflowState
-from system_prompts import SystemPrompts
 
 
 class Workflow:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-        self.system_prompts = SystemPrompts()
         self.tools = [
             StructuredTool(
                 name="query_runner",
@@ -30,6 +32,7 @@ class Workflow:
         ]
 
         self.setup_models()
+        self.fetch_system_prompts()
 
     def setup_models(self) -> None:
         base_guardrail_model = ChatOpenAI(
@@ -108,6 +111,23 @@ class Workflow:
                 },
             },
         )
+
+    def fetch_system_prompts(self) -> None:
+        system_prompts = {}
+
+        with open(self.settings.model_1_system_prompt_path, "r") as f:
+            content = f.read()
+            system_prompts["guardrail_prompt"] = content
+
+        with open(self.settings.model_2_system_prompt_path, "r") as f:
+            content = f.read()
+            system_prompts["query_writer_prompt"] = content
+
+        with open(self.settings.model_3_system_prompt_path, "r") as f:
+            content = f.read()
+            system_prompts["responder_prompt"] = content
+
+        self.system_prompts = SystemPromptsModel(**system_prompts)
 
     async def guardrail_node(
         self, state: WorkflowState
