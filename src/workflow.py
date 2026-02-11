@@ -10,16 +10,15 @@ from langgraph.prebuilt import ToolNode
 from langgraph.types import Command
 from typing_extensions import AsyncIterator, Literal, cast
 
-from src.models import GuardrailStructuredOutputModel, QueryRunnerInputModel
-from src.settings import Settings
-from src.states import WorkflowState
-from src.system_prompts import SystemPrompts
+from models import GuardrailStructuredOutputModel, QueryRunnerInputModel
+from settings import Settings
+from states import WorkflowState
+from system_prompts import SystemPrompts
 
 
 class Workflow:
-    def __init__(self, settings: Settings, db_pool: asyncpg.Pool) -> None:
+    def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.db_pool = db_pool
 
         self.system_prompts = SystemPrompts()
         self.tools = [
@@ -165,7 +164,7 @@ class Workflow:
             return cast(WorkflowState, {})
 
     async def query_runner_node(self, query: str) -> list[dict]:
-        """Execute a PostgreSQL SELECT query.
+        """Execute a PostgreSQL SELECT query with a fresh connection.
 
         Args:
             query (str): The SELECT query string
@@ -179,10 +178,20 @@ class Workflow:
 
             sg.parse_one(sql=query, read="postgres")
 
-            async with self.db_pool.acquire() as conn:
+            conn = await asyncpg.connect(
+                host=self.settings.database_host,
+                port=self.settings.database_port,
+                database=self.settings.database_name,
+                user=self.settings.database_user,
+                password=self.settings.database_password.get_secret_value(),
+            )
+
+            try:
                 rows = await conn.fetch(query)
 
                 return [dict(row) for row in rows]
+            finally:
+                await conn.close()
 
         except Exception as e:
             print(e)
