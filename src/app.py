@@ -2,7 +2,7 @@ import asyncio
 import json
 
 import streamlit as st
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk
 
 from settings import Settings
 from workflow import Workflow
@@ -142,7 +142,7 @@ def main():
                 guardrail_data = None
                 sql_query = None
 
-                astream = workflow.astream(messages=[HumanMessage(content=prompt)])
+                astream = workflow.astream(prompt, st.session_state.messages)
 
                 async def process_stream():
                     nonlocal full_response, guardrail_data, sql_query

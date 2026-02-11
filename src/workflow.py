@@ -2,7 +2,7 @@ import traceback
 
 import asyncpg
 import sqlglot as sg
-from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
@@ -141,7 +141,7 @@ class Workflow:
             )
 
             response = await self.guardrail_model.ainvoke(
-                [guardrail_system_prompt] + state["messages"]
+                [guardrail_system_prompt] + state["ui_messages"]
             )
 
             is_irrelevant_prompt = response.is_irrelevant_prompt
@@ -232,7 +232,13 @@ class Workflow:
                 [responder_system_prompt] + state["messages"]
             )
 
-            return cast(WorkflowState, {"messages": [response]})
+            return cast(
+                WorkflowState,
+                {
+                    "messages": [response],
+                    "ui_messages": [response],
+                },
+            )
 
         except Exception as e:
             print(e)
@@ -263,8 +269,17 @@ class Workflow:
 
         self.graph_builder = graph_builder
 
-    def astream(self, messages: list[BaseMessage]) -> AsyncIterator[dict]:
+    def astream(
+        self,
+        prompt: str,
+        ui_messages: list[BaseMessage],
+    ) -> AsyncIterator[dict]:
         graph = self.graph_builder.compile()
-        state = WorkflowState(messages=messages)
+
+        human_message = HumanMessage(content=prompt)
+        state = WorkflowState(
+            messages=[human_message],
+            ui_messages=ui_messages,
+        )
 
         return graph.astream(input=state, stream_mode=["messages"])
