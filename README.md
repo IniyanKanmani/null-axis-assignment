@@ -12,12 +12,11 @@ An AI-powered analytics assistant for exploring NYC 311 service request data. As
 
 ## Prerequisites
 
-- Python 3.14+
-- PostgreSQL 14+
-- [uv](https://docs.astral.sh/uv/) package manager
+- Docker Engine 20.10+
+- Docker Compose 2.0+
 - OpenRouter API key
 
-## Installation
+## Quick Start
 
 1. **Clone the repository**
 
@@ -26,34 +25,102 @@ An AI-powered analytics assistant for exploring NYC 311 service request data. As
    cd null-axis-assignment
    ```
 
-2. **Install dependencies**
+2. **Download the dataset**
 
-   ```bash
-   uv sync
+   Download the NYC 311 Service Requests CSV from [NYC Open Data](https://data.cityofnewyork.us/Social-Services/311-Service-Requests-from-2010-to-Present/erm2-nwe9) and place it in:
+
+   ```
+   data/311_Service_Requests_from_2010_to_Present.csv
    ```
 
-3. **Activate virtual environment**
+3. **Configure environment variables**
+
    ```bash
+   cp .env.example .env
+   ```
+
+   Edit `.env` with your OpenRouter API key:
+
+   ```env
+   OPENROUTER_API_KEY="your-api-key-here"
+   OPENROUTER_BASE_URL="https://openrouter.ai/api/v1"
+   ```
+
+4. **Start the application**
+
+   ```bash
+   docker-compose up -d
+   ```
+
+5. **Access the application**
+
+   Open your browser and navigate to `http://localhost`
+
+   > **Note**: The first startup will take 2-5 minutes as the CSV data (364,559 rows) is imported into the database. Subsequent restarts are fast.
+
+## Docker Commands
+
+```bash
+# Start all services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# View specific service logs
+docker-compose logs -f app
+docker-compose logs -f db
+
+# Stop all services
+docker-compose down
+
+# Stop and remove all data (including database)
+docker-compose down -v
+
+# Rebuild after code changes
+docker-compose up -d --build
+
+# Check service status
+docker-compose ps
+```
+
+## Manual Installation
+
+If you prefer to run without Docker:
+
+### Prerequisites
+
+- Python 3.14+
+- PostgreSQL 14+
+- [uv](https://docs.astral.sh/uv/) package manager
+- OpenRouter API key
+
+### Setup
+
+1. **Clone and install dependencies**
+
+   ```bash
+   git clone <repository-url>
+   cd null-axis-assignment
+   uv sync
    source .venv/bin/activate  # Linux/Mac
    # or
-   .venv\Scripts\activate     # Windows
+   .venv\Scripts\activate      # Windows
    ```
 
-## Database Setup
+2. **Download the dataset**
 
-1. **Create PostgreSQL database**
+   Place the CSV file in `data/311_Service_Requests_from_2010_to_Present.csv`
+
+3. **Setup database**
 
    ```bash
    createdb nyc311
+   psql -d nyc311 -f db/init/01-schema.sql
    ```
 
-2. **Run schema migration**
+4. **Import CSV data** (364,559 records)
 
-   ```bash
-   psql -d nyc311 -f data/database.sql
-   ```
-
-3. **Import CSV data** (364,559 records)
    ```bash
    psql -d nyc311 -c "
    COPY service_requests (
@@ -75,23 +142,33 @@ An AI-powered analytics assistant for exploring NYC 311 service request data. As
    "
    ```
 
-## Configuration
-
-1. **Copy environment file**
+5. **Configure environment**
 
    ```bash
    cp .env.example .env
+   # Edit .env with your credentials
    ```
 
-2. **Edit `.env` with your credentials**
+6. **Run the application**
 
-## Running the Application
+   ```bash
+   streamlit run src/app.py
+   ```
 
-```bash
-streamlit run src/app.py
-```
+## Configuration
 
-The application will be available at `http://localhost:8501`
+The application uses environment variables from `.env`:
+
+### Required
+
+- `OPENROUTER_BASE_URL` - OpenRouter API endpoint
+- `OPENROUTER_API_KEY` - Your OpenRouter API key
+
+### Optional
+
+- `DEBUG` - Enable debug logging (default: `false`)
+- `OPENROUTER_MODEL_1/2/3` - Model selection for each agent
+- `DATABASE_HOST/PORT/NAME/USER/PASSWORD` - Database connection (auto-configured in Docker)
 
 ## Example Queries
 
@@ -107,6 +184,12 @@ Try asking questions like:
 
 ```
 .
+├── data/
+│   └── 311_Service_Requests_*.csv  # NYC 311 dataset (place here before starting)
+├── db/
+│   └── init/
+│       ├── 01-schema.sql           # PostgreSQL schema
+│       └── 02-import-data.sh       # CSV import script
 ├── src/
 │   ├── app.py                      # Streamlit web interface
 │   ├── main.py                     # CLI entry point for testing
@@ -118,11 +201,41 @@ Try asking questions like:
 │       ├── guardrail_prompt.md     # Security & relevance validation
 │       ├── query_writer_prompt.md  # SQL generation instructions
 │       └── responder_prompt.md     # Response formatting guidelines
-├── data/
-│   ├── database.sql                # PostgreSQL schema
-│   └── 311_Service_Requests_*.csv  # NYC 311 dataset
+├── nginx/
+│   └── nginx.conf                  # Reverse proxy configuration
+├── docker-compose.yml              # Docker orchestration
+├── Dockerfile                      # Application container
 ├── pyproject.toml                  # Project dependencies
 └── README.md                       # This file
+```
+
+## Troubleshooting
+
+### Port 80 already in use
+
+```bash
+# Change the port in docker-compose.yml
+ports:
+  - "80:80"  # Use port 8080 instead
+```
+
+### Database connection issues
+
+```bash
+# Check database logs
+docker-compose logs db
+
+# Reset database (WARNING: This will delete all data)
+docker-compose down -v
+docker-compose up -d
+```
+
+### CSV import fails
+
+Ensure the CSV file is placed correctly:
+
+```bash
+ls -lh data/311_Service_Requests_from_2010_to_Present.csv
 ```
 
 ## Data Schema
@@ -136,7 +249,7 @@ The `service_requests` table contains 53 columns including:
 - **Location**: `borough`, `incident_zip`, `latitude`, `longitude`
 - **Status**: `status`, `resolution_description`
 
-See `data/database.sql` for complete schema with indexes.
+See `db/init/01-schema.sql` for complete schema with indexes.
 
 ## Technologies
 
@@ -146,6 +259,7 @@ See `data/database.sql` for complete schema with indexes.
 - **[asyncpg](https://magicstack.github.io/asyncpg/)** - Async PostgreSQL driver
 - **[Pydantic](https://docs.pydantic.dev/)** - Data validation and settings
 - **[OpenRouter](https://openrouter.ai/)** - LLM API aggregation
+- **[Docker](https://www.docker.com/)** - Containerization
 
 ---
 
