@@ -42,12 +42,9 @@ class Workflow:
             disable_streaming=True,
             streaming=False,
             temperature=0.25,
-            # reasoning={
-            #     "effort": "medium",
-            #     "summary": None,
-            # },
             extra_body={
                 "provider": {
+                    "order": ["grok"],
                     "allow_fallbacks": True,
                     "require_parameters": True,
                     "data_collection": "deny",
@@ -70,12 +67,9 @@ class Workflow:
             disable_streaming=True,
             streaming=False,
             temperature=0,
-            # reasoning={
-            #     "effort": "medium",
-            #     "summary": None,
-            # },
             extra_body={
                 "provider": {
+                    "order": ["groq"],
                     "allow_fallbacks": True,
                     "require_parameters": True,
                     "data_collection": "deny",
@@ -97,12 +91,9 @@ class Workflow:
             disable_streaming=False,
             streaming=True,
             temperature=0.75,
-            # reasoning={
-            #     "effort": "medium",
-            #     "summary": None,
-            # },
             extra_body={
                 "provider": {
+                    "order": ["groq"],
                     "allow_fallbacks": True,
                     "require_parameters": True,
                     "data_collection": "deny",
