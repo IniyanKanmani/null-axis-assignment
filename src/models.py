@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 class SystemPromptsModel(BaseModel):
     """System Prompts for Workflow Models"""
 
+    summarize_prompt: str = Field(description="System Prompt for the Summarize Model")
     guardrail_prompt: str = Field(description="System Prompt for the Guardrail Model")
     query_writer_prompt: str = Field(
         description="System Prompt for the Query Writer Model"

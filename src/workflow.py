@@ -35,7 +35,7 @@ class Workflow:
         self.fetch_system_prompts()
 
     def setup_models(self) -> None:
-        base_guardrail_model = ChatOpenAI(
+        base_summarize_model = ChatOpenAI(
             base_url=self.settings.openrouter_base_url,
             api_key=self.settings.openrouter_api_key,
             model=self.settings.openrouter_model_1,
@@ -44,7 +44,28 @@ class Workflow:
             temperature=0.25,
             extra_body={
                 "provider": {
-                    "order": ["grok"],
+                    "order": ["groq"],
+                    "allow_fallbacks": True,
+                    "require_parameters": True,
+                    "data_collection": "deny",
+                    "zdr": True,
+                    "sort": "price",
+                },
+            },
+        )
+
+        self.summarize_model = base_summarize_model
+
+        base_guardrail_model = ChatOpenAI(
+            base_url=self.settings.openrouter_base_url,
+            api_key=self.settings.openrouter_api_key,
+            model=self.settings.openrouter_model_2,
+            disable_streaming=True,
+            streaming=False,
+            temperature=0.25,
+            extra_body={
+                "provider": {
+                    "order": ["groq"],
                     "allow_fallbacks": True,
                     "require_parameters": True,
                     "data_collection": "deny",
@@ -63,7 +84,7 @@ class Workflow:
         base_query_writer_model = ChatOpenAI(
             base_url=self.settings.openrouter_base_url,
             api_key=self.settings.openrouter_api_key,
-            model=self.settings.openrouter_model_2,
+            model=self.settings.openrouter_model_3,
             disable_streaming=True,
             streaming=False,
             temperature=0,
@@ -87,7 +108,7 @@ class Workflow:
         self.responder_model = ChatOpenAI(
             base_url=self.settings.openrouter_base_url,
             api_key=self.settings.openrouter_api_key,
-            model=self.settings.openrouter_model_3,
+            model=self.settings.openrouter_model_4,
             disable_streaming=False,
             streaming=True,
             temperature=0.75,
@@ -108,17 +129,50 @@ class Workflow:
 
         with open(self.settings.model_1_system_prompt_path, "r") as f:
             content = f.read()
-            system_prompts["guardrail_prompt"] = content
+            system_prompts["summarize_prompt"] = content
 
         with open(self.settings.model_2_system_prompt_path, "r") as f:
             content = f.read()
-            system_prompts["query_writer_prompt"] = content
+            system_prompts["guardrail_prompt"] = content
 
         with open(self.settings.model_3_system_prompt_path, "r") as f:
+            content = f.read()
+            system_prompts["query_writer_prompt"] = content
+
+        with open(self.settings.model_4_system_prompt_path, "r") as f:
             content = f.read()
             system_prompts["responder_prompt"] = content
 
         self.system_prompts = SystemPromptsModel(**system_prompts)
+
+    async def summarize_node(self, state: WorkflowState) -> WorkflowState:
+        try:
+            if self.settings.debug:
+                print("---SummarizeNode---")
+
+            ui_messages = state["ui_messages"]
+
+            if len(ui_messages) > 5:
+                summarize_system_prompt = SystemMessage(
+                    content=self.system_prompts.summarize_prompt,
+                )
+
+                response = await self.summarize_model.ainvoke(
+                    [summarize_system_prompt] + ui_messages[:-5]
+                )
+
+                return cast(
+                    WorkflowState,
+                    {"conversation_summary": response},
+                )
+
+            return cast(WorkflowState, {})
+
+        except Exception as e:
+            print(e)
+            traceback.print_exc()
+
+            return cast(WorkflowState, {})
 
     async def guardrail_node(
         self, state: WorkflowState
@@ -132,7 +186,12 @@ class Workflow:
             )
 
             response = await self.guardrail_model.ainvoke(
-                [guardrail_system_prompt] + state["ui_messages"]
+                [guardrail_system_prompt]
+                + (
+                    [state["conversation_summary"]] + state["ui_messages"][-5:]
+                    if state["conversation_summary"] and state["ui_messages"]
+                    else state["ui_messages"]
+                )
             )
 
             is_irrelevant_prompt = response.is_irrelevant_prompt
@@ -242,6 +301,7 @@ class Workflow:
 
         tool_node = ToolNode(tools=self.tools)
 
+        graph_builder.add_node("summarize", self.summarize_node)
         graph_builder.add_node(
             "guardrail",
             self.guardrail_node,
@@ -251,7 +311,8 @@ class Workflow:
         graph_builder.add_node("tools", tool_node)
         graph_builder.add_node("responder", self.responder_node)
 
-        graph_builder.add_edge(START, "guardrail")
+        graph_builder.add_edge(START, "summarize")
+        graph_builder.add_edge("summarize", "guardrail")
         # graph_builder.add_edge("guardrail", END) # Handled by Command
         # graph_builder.add_edge("guardrail", "query_writer") # Handled by Command
         graph_builder.add_edge("query_writer", "tools")

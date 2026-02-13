@@ -15,10 +15,12 @@ class Settings(BaseSettings):
     openrouter_model_1: str
     openrouter_model_2: str
     openrouter_model_3: str
+    openrouter_model_4: str
 
     model_1_system_prompt_path: str
     model_2_system_prompt_path: str
     model_3_system_prompt_path: str
+    model_4_system_prompt_path: str
 
     database_host: str
     database_port: int
