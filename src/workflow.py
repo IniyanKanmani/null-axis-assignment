@@ -35,7 +35,7 @@ class Workflow:
         self.fetch_system_prompts()
 
     def setup_models(self) -> None:
-        base_summarize_model = ChatOpenAI(
+        self.summarize_model = ChatOpenAI(
             base_url=self.settings.openrouter_base_url,
             api_key=self.settings.openrouter_api_key,
             model=self.settings.openrouter_model_1,
@@ -53,8 +53,6 @@ class Workflow:
                 },
             },
         )
-
-        self.summarize_model = base_summarize_model
 
         base_guardrail_model = ChatOpenAI(
             base_url=self.settings.openrouter_base_url,
@@ -152,13 +150,13 @@ class Workflow:
 
             ui_messages = state["ui_messages"]
 
-            if len(ui_messages) > 5:
+            if len(ui_messages) > 10:
                 summarize_system_prompt = SystemMessage(
                     content=self.system_prompts.summarize_prompt,
                 )
 
                 response = await self.summarize_model.ainvoke(
-                    [summarize_system_prompt] + ui_messages[:-5]
+                    [summarize_system_prompt] + ui_messages[:-10]
                 )
 
                 return cast(
@@ -185,11 +183,13 @@ class Workflow:
                 content=self.system_prompts.guardrail_prompt,
             )
 
+            conversation_summary = state.get("conversation_summary")
+
             response = await self.guardrail_model.ainvoke(
                 [guardrail_system_prompt]
                 + (
-                    [state["conversation_summary"]] + state["ui_messages"][-5:]
-                    if state["conversation_summary"] and state["ui_messages"]
+                    [conversation_summary] + state["ui_messages"][-10:]
+                    if conversation_summary and state["ui_messages"]
                     else state["ui_messages"]
                 )
             )

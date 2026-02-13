@@ -114,16 +114,20 @@ def main():
             st.markdown(message["content"])
 
             if message["role"] == "assistant" and "metadata" in message:
-                with st.expander("📊 View Query Details"):
-                    metadata = message["metadata"]
+                metadata = message["metadata"]
+                if metadata:
+                    with st.expander("📊 View Query Details"):
+                        if "is_irrelevant_prompt" in metadata:
+                            st.write(
+                                f"**Irrelevant:** {metadata['is_irrelevant_prompt']}"
+                            )
+                        if "is_mallicious_prompt" in metadata:
+                            st.write(
+                                f"**Malicious:** {metadata['is_mallicious_prompt']}"
+                            )
 
-                    if "is_irrelevant_prompt" in metadata:
-                        st.write(f"**Irrelevant:** {metadata['is_irrelevant_prompt']}")
-                    if "is_mallicious_prompt" in metadata:
-                        st.write(f"**Malicious:** {metadata['is_mallicious_prompt']}")
-
-                    if "sql_query" in metadata:
-                        st.code(metadata["sql_query"], language="sql")
+                        if "sql_query" in metadata:
+                            st.code(metadata["sql_query"], language="sql")
 
     def process_prompt(prompt: str):
         st.session_state.messages.append({"role": "user", "content": prompt})
